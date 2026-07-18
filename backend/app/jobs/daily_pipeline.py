@@ -647,6 +647,65 @@ def _run_tracked(fn, job_label: str) -> None:
 # ================================================================
 
 REVIEW_JOB_ID = "scheduled_review"
+DAILY_MARKET_REFRESH_JOB_ID = "daily_market_refresh"
+
+
+async def _run_daily_market_refresh(repo, capset) -> None:
+    """日K完成后刷新行业资金流，并抓取新闻执行板块分析。"""
+    app_state = _get_app_state()
+    live_capset = getattr(app_state, "capabilities", None) or capset
+    quote_service = getattr(app_state, "quote_service", None)
+
+    def run_kline() -> None:
+        if quote_service:
+            with quote_service.paused():
+                run_now(repo, live_capset)
+        else:
+            run_now(repo, live_capset)
+        repo.refresh_cache()
+
+    try:
+        await asyncio.to_thread(run_kline)
+        from app.services import cls_telegraph, market_flow
+
+        snapshot = await asyncio.to_thread(market_flow.refresh_industry_flow, repo.store.data_dir)
+        plate_names = [row["plate_name"] for row in snapshot.get("rows", []) if row.get("plate_name")]
+        if plate_names:
+            await cls_telegraph.analyze_telegraphs(plate_names, 24)
+        logger.info("daily market refresh completed")
+    except Exception:
+        logger.exception("daily market refresh failed")
+
+
+def _register_daily_market_refresh_job(scheduler, repo, capset, hour: int, minute: int) -> None:
+    scheduler.add_job(
+        _run_daily_market_refresh,
+        args=[repo, capset],
+        trigger=CronTrigger(day_of_week="mon-fri", hour=hour, minute=minute, timezone="Asia/Shanghai"),
+        id=DAILY_MARKET_REFRESH_JOB_ID,
+        misfire_grace_time=3600,
+        replace_existing=True,
+    )
+
+
+def apply_daily_market_refresh_schedule(scheduler, repo, capset, config: dict) -> None:
+    """设置页保存后立即切换普通盘后管道与每日市场刷新任务。"""
+    from app.services import preferences
+
+    if config["enabled"]:
+        scheduler.pause_job("daily_pipeline")
+        _register_daily_market_refresh_job(scheduler, repo, capset, config["hour"], config["minute"])
+        return
+    try:
+        scheduler.remove_job(DAILY_MARKET_REFRESH_JOB_ID)
+    except Exception:
+        pass
+    scheduler.resume_job("daily_pipeline")
+    sched = preferences.get_pipeline_schedule()
+    scheduler.reschedule_job(
+        "daily_pipeline",
+        trigger=CronTrigger(day_of_week="mon-fri", hour=sched["hour"], minute=sched["minute"], timezone="Asia/Shanghai"),
+    )
 
 
 async def _run_scheduled_review(repo) -> None:
@@ -843,7 +902,6 @@ def _register_review_job(scheduler, repo, hour: int, minute: int) -> None:
         replace_existing=True,
     )
 
-
 def start_scheduler(repo: KlineRepository, capset: CapabilitySet) -> AsyncIOScheduler:
     """启动调度器。
 
@@ -907,6 +965,10 @@ def start_scheduler(repo: KlineRepository, capset: CapabilitySet) -> AsyncIOSche
         misfire_grace_time=3600,
         replace_existing=True,
     )
+
+    daily_refresh = preferences.get_daily_market_refresh()
+    if daily_refresh["enabled"]:
+        apply_daily_market_refresh_schedule(scheduler, repo, capset, daily_refresh)
 
     # 盘后: 五档盘口 sealed 定版(时间由偏好决定, 默认15:02, 范围15:01~18:00)
     depth_sched = preferences.get_depth_finalize_time()

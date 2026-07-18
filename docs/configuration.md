@@ -39,7 +39,7 @@ TICKFLOW_API_KEY=              # 留空 = None 模式(历史日K免费);填 Key 
 AI_PROVIDER=openai_compat              # openai_compat | ollama
 AI_BASE_URL=https://api.deepseek.com/v1
 AI_API_KEY=                            # 留空 = 关闭 AI
-AI_MODEL=deepseek-chat
+AI_MODEL=deepseek-v4-flash
 AI_DAILY_TOKEN_BUDGET=500000           # 每日 token 预算上限
 ```
 
@@ -48,7 +48,7 @@ AI_DAILY_TOKEN_BUDGET=500000           # 每日 token 预算上限
 | `AI_PROVIDER` | `openai_compat`(OpenAI 兼容,支持 DeepSeek / 通义 / OpenAI 等)或 `ollama`(本地模型) |
 | `AI_BASE_URL` | 接口地址,如 DeepSeek `https://api.deepseek.com/v1` |
 | `AI_API_KEY` | 留空则关闭 AI 功能 |
-| `AI_MODEL` | 模型名,如 `deepseek-chat` |
+| `AI_MODEL` | 模型名,如 `deepseek-v4-flash` |
 | `AI_DAILY_TOKEN_BUDGET` | 每日 token 预算,超限后当日不再调用 |
 
 接入示例见 [strategy.md](./strategy.md) 的「AI 生成策略」章节。

@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as echarts from 'echarts'
 import type { ECharts, EChartsOption } from 'echarts'
-import { Activity, RefreshCw, X } from 'lucide-react'
-import { api, type IndustryFlowSnapshot } from '@/lib/api'
+import { Activity, BrainCircuit, RefreshCw, X } from 'lucide-react'
+import { api, type IndustryFlowSnapshot, type MarketFlowNewsAnalysisJob, type PlateNewsDetailAnalysis, type TelegraphAnalysis } from '@/lib/api'
 import { fmtBigNum, fmtPct } from '@/lib/format'
 import { QK } from '@/lib/queryKeys'
 
@@ -13,7 +13,7 @@ function fmtFlowAmount(value: number | null | undefined) {
   return fmtBigNum(value == null ? value : Math.abs(value))
 }
 
-function FlowTreemap({ rows, history, positive, onSelect }: { rows: IndustryFlowRow[]; history: Map<string, number[]>; positive: boolean; onSelect: (row: IndustryFlowRow) => void }) {
+function FlowTreemap({ rows, history, positive, analysis, onSelect }: { rows: IndustryFlowRow[]; history: Map<string, number[]>; positive: boolean; analysis: Map<string, TelegraphAnalysis['plates'][number]>; onSelect: (row: IndustryFlowRow) => void }) {
   const chartRef = useRef<HTMLDivElement>(null)
   const chartRefInstance = useRef<ECharts | null>(null)
   const onSelectRef = useRef(onSelect)
@@ -24,9 +24,9 @@ function FlowTreemap({ rows, history, positive, onSelect }: { rows: IndustryFlow
     tooltip: {
       trigger: 'item', backgroundColor: '#18181d', borderColor: '#34343d', textStyle: { color: '#f4f4f5', fontSize: 12 }, padding: [9, 11],
       formatter: (params: any) => {
-        const item = params.data as { flow: number; pct: number; names: string; history: number[] }
+        const item = params.data as { flow: number; pct: number; names: string; history: number[]; news?: TelegraphAnalysis['plates'][number] }
         const trend = item.history.length > 1 ? item.history.map(fmtBigNum).join(' → ') : '新数据'
-        return [`<strong>${params.name}</strong>`, `资金${item.flow >= 0 ? '流入' : '流出'}：<b style="color:${item.flow >= 0 ? '#ef5a54' : '#22c58b'}">${fmtFlowAmount(item.flow)}</b>`, `板块涨跌：${fmtPct(item.pct)}`, item.names ? `代表股：${item.names}` : '', `资金趋势：${trend}`].filter(Boolean).join('<br/>')
+        return [`<strong>${params.name}</strong>`, item.news ? `<b style="color:${item.news.score > 0 ? '#ef5a54' : '#22c58b'}">新闻${item.news.score > 0 ? '利好' : '利空'} ${Math.abs(item.news.score)}级</b>` : '', `资金${item.flow >= 0 ? '流入' : '流出'}：<b style="color:${item.flow >= 0 ? '#ef5a54' : '#22c58b'}">${fmtFlowAmount(item.flow)}</b>`, `板块涨跌：${fmtPct(item.pct)}`, item.names ? `代表股：${item.names}` : '', `资金趋势：${trend}`].filter(Boolean).join('<br/>')
       },
     },
     series: [{
@@ -47,10 +47,11 @@ function FlowTreemap({ rows, history, positive, onSelect }: { rows: IndustryFlow
         const flow = row.fund_flow ?? 0
         const strength = Math.sqrt(Math.abs(flow) / maxAbsFlow)
         const names = row.top_n_stocks?.items?.slice(0, 2).map(stock => stock.stock_chi_name || stock.symbol).filter(Boolean).join(' · ') ?? ''
-        return { name: row.plate_name, plate: row, value: Math.max(Math.abs(flow), maxAbsFlow * 0.002), flow, pct: row.core_avg_pcp ?? 0, names, history: history.get(row.plate_id) ?? [], itemStyle: { color: positive ? `rgba(196, 67, 66, ${0.28 + strength * 0.64})` : `rgba(24, 132, 91, ${0.28 + strength * 0.64})` } }
+        const news = analysis.get(row.plate_name)
+        return { name: `${row.plate_name}${news ? `  ${news.score > 0 ? '▲' : '▼'}${Math.abs(news.score)}` : ''}`, plate: row, value: Math.max(Math.abs(flow), maxAbsFlow * 0.002), flow, pct: row.core_avg_pcp ?? 0, names, history: history.get(row.plate_id) ?? [], news, itemStyle: { color: positive ? `rgba(196, 67, 66, ${0.28 + strength * 0.64})` : `rgba(24, 132, 91, ${0.28 + strength * 0.64})` } }
       }),
     }],
-  }), [history, maxAbsFlow, positive, rows])
+  }), [analysis, history, maxAbsFlow, positive, rows])
 
   useEffect(() => {
     if (!chartRef.current) return
@@ -70,14 +71,37 @@ export function MarketFlow() {
   const [kind, setKind] = useState<'industry' | 'concept'>('industry')
   const [direction, setDirection] = useState<'inflow' | 'outflow'>('inflow')
   const [selectedPlate, setSelectedPlate] = useState<IndustryFlowRow | null>(null)
+  const [telegraphAnalysis, setTelegraphAnalysis] = useState<TelegraphAnalysis | null>(null)
+  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null)
+  const [plateDetailAnalysis, setPlateDetailAnalysis] = useState<PlateNewsDetailAnalysis | null>(null)
   const flow = useQuery({ queryKey: QK.industryFlow, queryFn: api.industryFlow, staleTime: 60_000, retry: false })
   const history = useQuery({ queryKey: QK.industryFlowHistory(20), queryFn: () => api.industryFlowHistory(20), staleTime: 60_000, retry: false })
   const conceptFlow = useQuery({ queryKey: QK.conceptFlow, queryFn: api.conceptFlow, staleTime: 60_000, retry: false })
   const conceptHistory = useQuery({ queryKey: QK.conceptFlowHistory(20), queryFn: () => api.conceptFlowHistory(20), staleTime: 60_000, retry: false })
   const refresh = useMutation({ mutationFn: api.refreshIndustryFlow, onSuccess: () => { qc.invalidateQueries({ queryKey: QK.industryFlow }); qc.invalidateQueries({ queryKey: QK.industryFlowHistory(20) }) } })
   const refreshConcept = useMutation({ mutationFn: api.refreshConceptFlow, onSuccess: () => { qc.invalidateQueries({ queryKey: QK.conceptFlow }); qc.invalidateQueries({ queryKey: QK.conceptFlowHistory(20) }) } })
+  const startNewsAnalysis = useMutation({ mutationFn: api.startMarketFlowNewsAnalysis, onSuccess: ({ job_id }) => setAnalysisJobId(job_id) })
+  const newsAnalysisJob = useQuery({
+    queryKey: ['market-flow-news-analysis', analysisJobId],
+    queryFn: () => api.marketFlowNewsAnalysisJob(analysisJobId!),
+    enabled: !!analysisJobId,
+    staleTime: 0,
+  })
+  const analyzePlateDetail = useMutation({
+    mutationFn: ({ plateName, newsIds }: { plateName: string; newsIds: number[] }) => api.analyzePlateNewsDetail(plateName, newsIds),
+    onSuccess: setPlateDetailAnalysis,
+  })
   const plateStocks = useQuery({ queryKey: ['market-flow-plate-stocks', selectedPlate?.plate_id], queryFn: () => api.marketFlowPlateStocks(selectedPlate!.plate_id), enabled: !!selectedPlate, retry: false })
   useEffect(() => { if (kind === 'concept' && !conceptFlow.data && !refreshConcept.isPending) refreshConcept.mutate() }, [conceptFlow.data, kind, refreshConcept])
+  useEffect(() => {
+    const job = newsAnalysisJob.data
+    if (!analysisJobId || !job || job.status === 'succeeded' || job.status === 'failed') return
+    const timer = window.setInterval(() => { newsAnalysisJob.refetch() }, 1000)
+    return () => window.clearInterval(timer)
+  }, [analysisJobId, newsAnalysisJob.data, newsAnalysisJob.refetch])
+  useEffect(() => {
+    if (newsAnalysisJob.data?.status === 'succeeded' && newsAnalysisJob.data.result) setTelegraphAnalysis(newsAnalysisJob.data.result)
+  }, [newsAnalysisJob.data])
 
   const activeFlow = kind === 'industry' ? flow.data : conceptFlow.data
   const activeHistory = kind === 'industry' ? history.data : conceptHistory.data
@@ -92,6 +116,12 @@ export function MarketFlow() {
   const historyById = new Map<string, number[]>()
   for (const daily of activeHistory?.snapshots ?? []) for (const row of daily.rows) if (typeof row.fund_flow === 'number') historyById.set(row.plate_id, [...(historyById.get(row.plate_id) ?? []), row.fund_flow])
   const activeRows = direction === 'inflow' ? inflows : outflows
+  const analysisByPlate = new Map((telegraphAnalysis?.plates ?? []).map(item => [item.plate_name, item]))
+  const selectedNews = selectedPlate ? analysisByPlate.get(selectedPlate.plate_name) : undefined
+  const analysisJob = newsAnalysisJob.data as MarketFlowNewsAnalysisJob | undefined
+  const analysisRunning = startNewsAnalysis.isPending || analysisJob?.status === 'pending' || analysisJob?.status === 'running'
+  const analysisProgress = analysisJob?.total_batches ? Math.round(analysisJob.completed_batches / analysisJob.total_batches * 100) : 0
+  const analyzedAt = telegraphAnalysis?.analyzed_at ? new Date(telegraphAnalysis.analyzed_at).toLocaleString('zh-CN') : ''
 
   return (
     <div className="min-h-full bg-base p-3">
@@ -100,6 +130,8 @@ export function MarketFlow() {
           <div className="flex items-center gap-2"><Activity className="h-4 w-4 text-accent" /><div><h1 className="text-sm font-semibold text-foreground">资金流热力图</h1><p className="mt-0.5 font-mono text-[11px] text-muted">{activeFlow.as_of} · {rows.length} 个{kind === 'industry' ? '行业' : '概念'}</p></div></div>
           <div className="flex items-center gap-2">
             <span className="font-mono text-xs text-bull">流入 {fmtBigNum(inflowTotal)}</span><span className="font-mono text-xs text-bear">流出 {fmtBigNum(outflowTotal)}</span>
+            {analyzedAt && <span className="font-mono text-[10px] text-muted" title={`新闻分析时间：${analyzedAt}`}>分析于 {analyzedAt}{telegraphAnalysis?.cache_hit ? ' · 缓存' : ''}</span>}
+            <button onClick={() => startNewsAnalysis.mutate(rows.map(row => row.plate_name))} disabled={analysisRunning} title="抓取最近 24 小时华尔街见闻全球快讯并分析板块影响" className="flex h-7 items-center gap-1 border border-border px-2 text-xs text-muted hover:bg-elevated hover:text-accent disabled:opacity-50"><BrainCircuit className={`h-3.5 w-3.5 ${analysisRunning ? 'animate-pulse' : ''}`} />{analysisRunning ? '分析中' : '新闻分析'}</button>
             <button onClick={() => activeRefresh.mutate()} disabled={activeRefresh.isPending} title="刷新板块资金流" className="grid h-7 w-7 place-items-center border border-border text-muted hover:bg-elevated hover:text-accent disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${activeRefresh.isPending ? 'animate-spin' : ''}`} /></button>
           </div>
         </div>
@@ -107,9 +139,29 @@ export function MarketFlow() {
           <div className="flex border border-border"><button onClick={() => setKind('industry')} className={`h-7 px-3 text-xs ${kind === 'industry' ? 'bg-accent text-base' : 'text-muted hover:bg-elevated'}`}>行业</button><button onClick={() => setKind('concept')} className={`h-7 border-l border-border px-3 text-xs ${kind === 'concept' ? 'bg-accent text-base' : 'text-muted hover:bg-elevated'}`}>概念</button></div>
           <div className="flex border border-border"><button onClick={() => setDirection('inflow')} className={`h-7 px-3 text-xs ${direction === 'inflow' ? 'bg-bull text-base' : 'text-muted hover:bg-elevated'}`}>流入 {fmtBigNum(inflowTotal)}</button><button onClick={() => setDirection('outflow')} className={`h-7 border-l border-border px-3 text-xs ${direction === 'outflow' ? 'bg-bear text-base' : 'text-muted hover:bg-elevated'}`}>流出 {fmtBigNum(outflowTotal)}</button></div>
         </div>
-        <div><div className="mb-1.5 flex items-baseline justify-between"><h2 className={`text-xs font-semibold ${direction === 'inflow' ? 'text-bull' : 'text-bear'}`}>{kind === 'industry' ? '行业' : '概念'}资金{direction === 'inflow' ? '流入' : '流出'}</h2><span className="font-mono text-[11px] text-muted">{activeRows.length} 个 · {fmtBigNum(direction === 'inflow' ? inflowTotal : outflowTotal)} · 点击板块查看成分股 · 滚轮缩放 · 拖动平移</span></div><FlowTreemap rows={activeRows} history={historyById} positive={direction === 'inflow'} onSelect={setSelectedPlate} /></div>
+        <div><div className="mb-1.5 flex items-baseline justify-between"><h2 className={`text-xs font-semibold ${direction === 'inflow' ? 'text-bull' : 'text-bear'}`}>{kind === 'industry' ? '行业' : '概念'}资金{direction === 'inflow' ? '流入' : '流出'}</h2><span className="font-mono text-[11px] text-muted">{activeRows.length} 个 · {fmtBigNum(direction === 'inflow' ? inflowTotal : outflowTotal)} · 点击板块查看成分股 · 滚轮缩放 · 拖动平移</span></div>{analysisRunning && <div className="mb-2 border border-accent/30 bg-elevated/50 px-2.5 py-2"><div className="mb-1 flex items-center justify-between text-[11px] text-muted"><span>新闻分析 {analysisJob?.completed_batches ?? 0}/{analysisJob?.total_batches ?? 0} 批 · 已重试 {analysisJob?.retry_count ?? 0} 次</span><span className="font-mono text-accent">{analysisProgress}%</span></div><div className="h-1 overflow-hidden bg-border"><div className="h-full bg-accent transition-all duration-300" style={{ width: `${analysisProgress}%` }} /></div></div>}{telegraphAnalysis && <div className="mb-2 border border-border bg-elevated/50 px-2.5 py-2 text-xs text-muted"><span className="mr-2 font-medium text-foreground">{telegraphAnalysis.source} · {telegraphAnalysis.news_count} 条 · {telegraphAnalysis.batch_count ?? 1} 批</span>{telegraphAnalysis.failed_batch_count ? <span className="ml-2 text-bear">{telegraphAnalysis.failed_batch_count} 批未完成</span> : null}{new Date(telegraphAnalysis.coverage_start).toLocaleString('zh-CN')} 至 {new Date(telegraphAnalysis.coverage_end).toLocaleString('zh-CN')} · {telegraphAnalysis.summary}</div>}{(startNewsAnalysis.error || newsAnalysisJob.data?.status === 'failed') && <div className="mb-2 border border-bear/30 bg-bear/10 px-2.5 py-2 text-xs text-bear">{newsAnalysisJob.data?.error ?? (startNewsAnalysis.error instanceof Error ? startNewsAnalysis.error.message : '新闻分析失败')}</div>}<FlowTreemap rows={activeRows} history={historyById} positive={direction === 'inflow'} analysis={analysisByPlate} onSelect={setSelectedPlate} /></div>
       </section>
-      {selectedPlate && <div className="fixed inset-0 z-50 flex items-center justify-center p-5"><button className="absolute inset-0 bg-black/65" aria-label="关闭成分股窗口" onClick={() => setSelectedPlate(null)} /><section className="relative flex max-h-[85vh] w-full max-w-5xl flex-col border border-border bg-surface shadow-2xl"><header className="flex items-center justify-between border-b border-border px-4 py-3"><div><h2 className="text-sm font-semibold text-foreground">{selectedPlate.plate_name} 成分股</h2><p className="mt-0.5 font-mono text-[11px] text-muted">选股通成分股 · 项目行情报价 · {plateStocks.data?.stocks.length ?? 0} 只</p></div><button onClick={() => setSelectedPlate(null)} title="关闭" className="grid h-8 w-8 place-items-center text-muted hover:bg-elevated hover:text-foreground"><X className="h-4 w-4" /></button></header><div className="min-h-0 overflow-y-auto"><table className="w-full text-left text-xs"><thead className="sticky top-0 bg-elevated text-muted"><tr><th className="px-4 py-2 font-medium">代码</th><th className="px-4 py-2 font-medium">名称</th><th className="px-4 py-2 text-right font-medium">最新价</th><th className="px-4 py-2 text-right font-medium">涨跌额</th><th className="px-4 py-2 text-right font-medium">涨跌幅</th></tr></thead><tbody>{plateStocks.isLoading ? <tr><td colSpan={5} className="px-4 py-10 text-center text-muted">加载成分股与行情…</td></tr> : plateStocks.data?.stocks.map(stock => { const pct = stock.change_percent ?? null; return <tr key={stock.symbol} className="border-t border-border/70 hover:bg-elevated/60"><td className="px-4 py-2 font-mono text-muted">{stock.symbol}</td><td className="px-4 py-2 font-medium text-foreground">{stock.name}</td><td className="px-4 py-2 text-right font-mono text-foreground">{stock.price?.toFixed(2) ?? '—'}</td><td className={`px-4 py-2 text-right font-mono ${pct != null && pct >= 0 ? 'text-bull' : 'text-bear'}`}>{stock.change_amount?.toFixed(2) ?? '—'}</td><td className={`px-4 py-2 text-right font-mono font-semibold ${pct != null && pct >= 0 ? 'text-bull' : 'text-bear'}`}>{pct == null ? '—' : fmtPct(pct)}</td></tr> })}</tbody></table></div></section></div>}
+      {selectedPlate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-5">
+          <button className="absolute inset-0 bg-black/65" aria-label="关闭成分股窗口" onClick={() => { setSelectedPlate(null); setPlateDetailAnalysis(null) }} />
+          <section className="relative flex h-[85vh] w-full max-w-5xl flex-col overflow-hidden border border-border bg-surface shadow-2xl">
+            <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+              <div><h2 className="text-sm font-semibold text-foreground">{selectedPlate.plate_name} 成分股</h2><p className="mt-0.5 font-mono text-[11px] text-muted">选股通成分股 · 项目行情报价 · {plateStocks.data?.stocks.length ?? 0} 只</p></div>
+              <button onClick={() => { setSelectedPlate(null); setPlateDetailAnalysis(null) }} title="关闭" className="grid h-8 w-8 place-items-center text-muted hover:bg-elevated hover:text-foreground"><X className="h-4 w-4" /></button>
+            </header>
+            {selectedNews && (
+              <div className="max-h-[38vh] shrink-0 overflow-y-auto border-b border-border bg-elevated/40 px-4 py-3">
+                <div className="flex items-center justify-between gap-3"><div className={`text-xs font-semibold ${selectedNews.score > 0 ? 'text-bull' : 'text-bear'}`}>新闻{selectedNews.score > 0 ? '利好' : '利空'} {Math.abs(selectedNews.score)}级</div><button type="button" onClick={() => { setPlateDetailAnalysis(null); analyzePlateDetail.mutate({ plateName: selectedPlate.plate_name, newsIds: selectedNews.news.map(news => news.id) }) }} disabled={analyzePlateDetail.isPending} className="h-7 border border-border px-2 text-xs text-muted hover:bg-surface hover:text-accent disabled:opacity-50">{analyzePlateDetail.isPending ? '详细分析中' : '详细新闻分析'}</button></div>
+                <p className="mt-1 text-xs text-foreground">{selectedNews.summary}</p>
+                {plateDetailAnalysis && <div className="mt-3 border border-accent/30 bg-surface px-3 py-2 text-xs leading-5 whitespace-pre-wrap text-secondary">{plateDetailAnalysis.analysis}</div>}
+                {analyzePlateDetail.error && <div className="mt-3 border border-bear/30 bg-bear/10 px-3 py-2 text-xs text-bear">{analyzePlateDetail.error instanceof Error ? analyzePlateDetail.error.message : '板块详细新闻分析失败'}</div>}
+                <div className="mt-2 space-y-2">{selectedNews.news.map(news => <article key={news.id} className="border-l-2 border-border pl-2"><div className="text-xs font-medium text-foreground">{news.title}</div><p className="mt-0.5 text-[11px] leading-5 text-muted">{news.content}</p><time className="font-mono text-[10px] text-muted">{new Date(news.published_at).toLocaleString('zh-CN')}</time></article>)}</div>
+              </div>
+            )}
+            <div className="min-h-0 flex-1 overflow-y-auto"><table className="w-full text-left text-xs"><thead className="sticky top-0 bg-elevated text-muted"><tr><th className="px-4 py-2 font-medium">代码</th><th className="px-4 py-2 font-medium">名称</th><th className="px-4 py-2 text-right font-medium">最新价</th><th className="px-4 py-2 text-right font-medium">涨跌额</th><th className="px-4 py-2 text-right font-medium">涨跌幅</th></tr></thead><tbody>{plateStocks.isLoading ? <tr><td colSpan={5} className="px-4 py-10 text-center text-muted">加载成分股与行情…</td></tr> : plateStocks.data?.stocks.map(stock => { const pct = stock.change_percent ?? null; return <tr key={stock.symbol} className="border-t border-border/70 hover:bg-elevated/60"><td className="px-4 py-2 font-mono text-muted">{stock.symbol}</td><td className="px-4 py-2 font-medium text-foreground">{stock.name}</td><td className="px-4 py-2 text-right font-mono text-foreground">{stock.price?.toFixed(2) ?? '—'}</td><td className={`px-4 py-2 text-right font-mono ${pct != null && pct >= 0 ? 'text-bull' : 'text-bear'}`}>{stock.change_amount?.toFixed(2) ?? '—'}</td><td className={`px-4 py-2 text-right font-mono font-semibold ${pct != null && pct >= 0 ? 'text-bull' : 'text-bear'}`}>{pct == null ? '—' : fmtPct(pct)}</td></tr> })}</tbody></table></div>
+          </section>
+        </div>
+      )}
     </div>
   )
 }

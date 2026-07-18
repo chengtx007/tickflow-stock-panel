@@ -871,6 +871,7 @@ export interface Preferences {
   pipeline_pull_index: boolean
   pipeline_index_symbols: string
   pipeline_schedule: { hour: number; minute: number }
+  daily_market_refresh: { enabled: boolean; hour: number; minute: number }
   instruments_schedule: { hour: number; minute: number }
   enriched_batch_size: number
   index_daily_batch_size: number
@@ -971,6 +972,47 @@ export interface IndustryFlowHistorySnapshot {
   as_of: string
   updated_at: string
   rows: Array<Pick<IndustryFlowRow, 'plate_id' | 'plate_name' | 'fund_flow' | 'core_avg_pcp'>>
+}
+
+export interface TelegraphPlateAnalysis {
+  plate_name: string
+  sentiment: 'bullish' | 'bearish' | 'neutral'
+  score: number
+  summary: string
+  news: Array<{ id: number; title: string; content: string; published_at: string; url?: string }>
+}
+
+export interface TelegraphAnalysis {
+  source: string
+  hours: number
+  news_count: number
+  batch_count?: number
+  failed_batch_count?: number
+  cache_hit?: boolean
+  coverage_start: string
+  coverage_end: string
+  summary: string
+  analyzed_at: string
+  plates: TelegraphPlateAnalysis[]
+}
+
+export interface PlateNewsDetailAnalysis {
+  plate_name: string
+  news_count: number
+  analysis: string
+}
+
+export interface MarketFlowNewsAnalysisJob {
+  id: string
+  status: 'pending' | 'running' | 'succeeded' | 'failed'
+  completed_batches: number
+  total_batches: number
+  retry_count: number
+  failed_batches: number
+  result: TelegraphAnalysis | null
+  error: string | null
+  created_at: string
+  finished_at: string | null
 }
 
 export const api = {
@@ -1197,6 +1239,11 @@ export const api = {
     request<{ hour: number; minute: number }>('/api/settings/preferences/pipeline-schedule', {
       method: 'PUT',
       body: JSON.stringify({ hour, minute }),
+    }),
+  updateDailyMarketRefresh: (enabled: boolean, hour: number, minute: number) =>
+    request<{ enabled: boolean; hour: number; minute: number }>('/api/settings/preferences/daily-market-refresh', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled, hour, minute }),
     }),
   updateReviewSchedule: (enabled: boolean, hour: number, minute: number) =>
     request<{ enabled: boolean; hour: number; minute: number }>('/api/settings/preferences/review-schedule', {
@@ -1470,6 +1517,9 @@ export const api = {
   conceptFlowHistory: (days = 20) => request<{ snapshots: IndustryFlowHistorySnapshot[] }>(`/api/market-flow/concept/history?days=${days}`),
   refreshConceptFlow: () => request<IndustryFlowSnapshot>('/api/market-flow/concept/refresh', { method: 'POST' }),
   marketFlowPlateStocks: (plateId: string) => request<{ stocks: Array<{ symbol: string; name: string; price?: number | null; change_amount?: number | null; change_percent?: number | null }> }>(`/api/market-flow/${encodeURIComponent(plateId)}/stocks`),
+  startMarketFlowNewsAnalysis: (plateNames: string[]) => request<{ job_id: string }>('/api/market-flow/telegraph-analysis', { method: 'POST', body: JSON.stringify({ plate_names: plateNames, hours: 24 }) }),
+  marketFlowNewsAnalysisJob: (jobId: string) => request<MarketFlowNewsAnalysisJob>(`/api/market-flow/news-analysis/${encodeURIComponent(jobId)}`),
+  analyzePlateNewsDetail: (plateName: string, newsIds: number[]) => request<PlateNewsDetailAnalysis>('/api/market-flow/plate-news-analysis', { method: 'POST', body: JSON.stringify({ plate_name: plateName, news_ids: newsIds, hours: 24 }) }),
 
   // 概念涨幅轮动矩阵: 每列(日期)各自把所有概念按当天涨幅从高到低排序
   rpsRotation: (days: number) =>

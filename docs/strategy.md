@@ -40,7 +40,7 @@
    AI_PROVIDER=openai_compat
    AI_BASE_URL=https://api.deepseek.com/v1
    AI_API_KEY=sk-...
-   AI_MODEL=deepseek-chat
+   AI_MODEL=deepseek-v4-flash
    ```
 2. 在选股页打开「AI 策略生成器」,用自然语言描述你的策略思路
 3. 前端流式接收生成代码,后端经 `ast` 安全校验(禁止 import os/sys/subprocess 等危险模块)后返回结果

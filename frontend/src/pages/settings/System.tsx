@@ -23,6 +23,7 @@ export function SettingsSystemPanel() {
   const [saving, setSaving] = useState(false)
 
   const screenerAutoRun = prefs?.screener_auto_run ?? true
+  const dailyMarketRefresh = prefs?.daily_market_refresh ?? { enabled: false, hour: 15, minute: 30 }
   const [clearing, setClearing] = useState(false)
   const [toastEnabled, setToastEnabled] = useState(() => {
     try { return localStorage.getItem('alert_toast_enabled') !== '0' } catch { return true }
@@ -85,6 +86,18 @@ export function SettingsSystemPanel() {
     }
   }, [qc])
 
+  const saveDailyMarketRefresh = useCallback(async (enabled: boolean, time: string) => {
+    const [hour, minute] = time.split(':').map(Number)
+    setSaving(true)
+    try {
+      await api.updateDailyMarketRefresh(enabled, hour, minute)
+      qc.invalidateQueries({ queryKey: QK.preferences })
+    } finally {
+      setSaving(false)
+    }
+  }, [qc])
+  const dailyRefreshTime = `${String(dailyMarketRefresh.hour).padStart(2, '0')}:${String(dailyMarketRefresh.minute).padStart(2, '0')}`
+
   // 刷新前端缓存: 清除 react-query 缓存 + 强制重载 (绕过浏览器缓存)
   // 不动 localStorage (用户列配置/策略池等偏好保留), 也不影响后端的本地股票数据
   const handleClearCache = useCallback(() => {
@@ -116,6 +129,30 @@ export function SettingsSystemPanel() {
           disabled={saving}
           onChange={(v) => save({ screener_auto_run: v })}
         />
+      </section>
+
+      <section className="rounded-card border border-border bg-surface p-5 mt-6">
+        <div className="flex items-center gap-2 mb-4">
+          <RefreshCw className="h-4 w-4 text-accent" />
+          <h3 className="text-sm font-medium text-foreground">每日市场刷新</h3>
+        </div>
+        <ToggleRow
+          label="每日自动刷新行情与新闻分析"
+          desc="按设定时间依次刷新日K、行业资金流、新闻并执行 LLM 板块分析"
+          checked={dailyMarketRefresh.enabled}
+          disabled={saving}
+          onChange={(enabled) => saveDailyMarketRefresh(enabled, dailyRefreshTime)}
+        />
+        <div className="flex items-center justify-between gap-4 py-2">
+          <div className="min-w-0"><div className="text-sm text-foreground">执行时间</div><div className="text-[11px] text-muted truncate">工作日盘后执行，最早可设为 15:00</div></div>
+          <input
+            type="time"
+            value={dailyRefreshTime}
+            disabled={!dailyMarketRefresh.enabled || saving}
+            onChange={(event) => saveDailyMarketRefresh(dailyMarketRefresh.enabled, event.target.value)}
+            className="h-8 rounded-btn border border-border bg-base px-2 text-xs text-foreground disabled:opacity-50"
+          />
+        </div>
       </section>
 
       <section className="rounded-card border border-border bg-surface p-5 mt-6">

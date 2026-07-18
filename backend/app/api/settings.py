@@ -410,6 +410,7 @@ def get_preferences() -> dict:
         "pipeline_pull_index": preferences.get_pipeline_pull_index(),
         "pipeline_index_symbols": preferences.get_pipeline_index_symbols(),
         "pipeline_schedule": preferences.get_pipeline_schedule(),
+        "daily_market_refresh": preferences.get_daily_market_refresh(),
         "instruments_schedule": preferences.get_instruments_schedule(),
         "enriched_batch_size": preferences.get_enriched_batch_size(),
         "index_daily_batch_size": preferences.get_index_daily_batch_size(),
@@ -796,6 +797,26 @@ class PipelinePullTypesIn(BaseModel):
     pipeline_pull_a_share: bool | None = None
     pipeline_pull_etf: bool | None = None
     pipeline_pull_index: bool | None = None
+
+
+class DailyMarketRefreshIn(BaseModel):
+    enabled: bool
+    hour: int
+    minute: int
+
+
+@router.put("/preferences/daily-market-refresh")
+def update_daily_market_refresh(req: DailyMarketRefreshIn, request: Request) -> dict:
+    from app.services import preferences
+    from app.jobs import daily_pipeline
+
+    saved = preferences.set_daily_market_refresh(req.enabled, req.hour, req.minute)
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler:
+        daily_pipeline.apply_daily_market_refresh_schedule(
+            scheduler, request.app.state.repo, request.app.state.capabilities, saved,
+        )
+    return saved
 
 
 @router.put("/preferences/pipeline-pull-types")

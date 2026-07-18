@@ -289,6 +289,21 @@ def set_pipeline_schedule(hour: int, minute: int) -> dict:
     return {"hour": h, "minute": m}
 
 
+def get_daily_market_refresh() -> dict:
+    d = load().get("daily_market_refresh", {"enabled": False, "hour": 15, "minute": 30})
+    return {"enabled": bool(d.get("enabled", False)), "hour": d.get("hour", 15), "minute": d.get("minute", 30)}
+
+
+def set_daily_market_refresh(enabled: bool, hour: int, minute: int) -> dict:
+    h = max(0, min(23, hour))
+    m = max(0, min(59, minute))
+    if h * 60 + m < 15 * 60:
+        h, m = 15, 0
+    value = {"enabled": bool(enabled), "hour": h, "minute": m}
+    save({"daily_market_refresh": value})
+    return value
+
+
 def get_instruments_schedule() -> dict:
     """返回盘前标的维表调度时间 {"hour": 9, "minute": 10}。"""
     d = load().get("instruments_schedule", {"hour": 9, "minute": 10})
