@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
+const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:3018';
 export default defineConfig({
     plugins: [react()],
     resolve: {
@@ -14,7 +15,7 @@ export default defineConfig({
         proxy: {
             // dev 时 /api 转发到 FastAPI
             '/api': {
-                target: 'http://localhost:3018',
+                target: apiProxyTarget,
                 // SSE 端点需要禁用缓冲
                 configure: (proxy) => {
                     proxy.on('proxyReq', (_proxyReq, req) => {
@@ -26,7 +27,7 @@ export default defineConfig({
                     });
                 },
             },
-            '/health': 'http://localhost:3018',
+            '/health': apiProxyTarget,
         },
     },
     build: {

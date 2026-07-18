@@ -90,6 +90,10 @@ class Settings(BaseSettings):
         "Chrome/131.0.0.0 Safari/537.36"
     )
 
+    # News providers (all optional; Exa's public MCP is the keyless fallback)
+    exa_mcp_url: str = "https://mcp.exa.ai/mcp"
+    tushare_api_token: str = ""
+
     # Server
     host: str = "0.0.0.0"
     port: int = 3018

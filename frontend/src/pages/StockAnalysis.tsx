@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Sparkles, LineChart, History as HistoryIcon, Loader2, ExternalLink, Bell, AlertTriangle } from 'lucide-react'
+import { useQuery, type UseQueryResult } from '@tanstack/react-query'
+import { Sparkles, LineChart, History as HistoryIcon, Loader2, ExternalLink, Bell, AlertTriangle, CalendarDays, RefreshCw } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
 import { StockFinancialSearch } from '@/components/financials/StockFinancialSearch'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { LastStockChip } from '@/components/LastStockChip'
 import { AnalysisKChart, type PriceLevel, type LevelType } from '@/components/stock-analysis/AnalysisKChart'
-import { api } from '@/lib/api'
+import { api, type StockCalendar, type StockCalendarEvent } from '@/lib/api'
 import { useLastStock } from '@/lib/useLastStock'
 import { QK } from '@/lib/queryKeys'
 import { toast } from '@/components/Toast'
@@ -17,7 +17,7 @@ import {
 } from '@/lib/stockAnalysisStore'
 
 /**
- * 个股分析页 —— 日 K + 关键价位(压力/支撑/密集区/枢轴/前高前低)+ AI 四维分析。
+ * 个股分析页 —— 日 K + 关键价位(压力/支撑/密集区/枢轴/前高前低)+ AI 三维分析。
  *
  * 与财务分析页的区别:
  *  - 以【行情 + 关键价位】为视觉主体(专用日 K 图表,不复用个股对话框图表)
@@ -83,7 +83,7 @@ export function StockAnalysis() {
             Beta
           </span>
         }
-        subtitle="日 K · 关键价位 · AI 四维分析(技术 / 基本面 / 财务 / 消息面)"
+        subtitle="日 K · 关键价位 · AI 三维分析(技术 / 基本面 / 财务)"
         right={
           <div className="flex items-center gap-2">
             <LastStockChip stock={lastStock} onSelect={onSelect} />
@@ -138,7 +138,7 @@ export function StockAnalysis() {
               <EmptyState
                 icon={LineChart}
                 title="选择一只股票开始分析"
-                hint="搜索代码或名称,查看日 K 与关键价位,并可让 AI 进行技术面 / 基本面 / 财务面 / 消息面四维综合分析。"
+                hint="搜索代码或名称,查看日 K 与关键价位,并可让 AI 进行技术面 / 基本面 / 财务面三维综合分析。"
               />
             ) : (
               <StockAnalysisBoard symbol={symbol} />
@@ -185,23 +185,47 @@ function StockAnalysisBoard({ symbol }: { symbol: string }) {
     staleTime: 60_000,
   })
 
+  const calendarQ = useQuery({
+    queryKey: QK.stockCalendar(symbol),
+    queryFn: () => api.stockAnalysisCalendar(symbol, 500),
+    enabled: !!symbol,
+    staleTime: 0,
+    refetchOnMount: 'always',
+  })
+
+  const calendarPanel = <StockCalendarPanel key={symbol} query={calendarQ} />
+  const eventPanels = calendarPanel
+
   if (kline.isLoading) {
-    return <div className="flex items-center justify-center py-20"><Loader2 className="h-5 w-5 animate-spin text-muted" /></div>
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-center py-20"><Loader2 className="h-5 w-5 animate-spin text-muted" /></div>
+        {eventPanels}
+      </div>
+    )
   }
 
   if (kline.isError) {
     return (
-      <EmptyState
-        icon={AlertTriangle}
-        title="日 K 数据加载失败"
-        hint="请检查网络或数据源配置后重试。"
-      />
+      <div className="space-y-4">
+        <EmptyState
+          icon={AlertTriangle}
+          title="日 K 数据加载失败"
+          hint="请检查网络或数据源配置后重试。"
+        />
+        {eventPanels}
+      </div>
     )
   }
 
   const rows = kline.data?.rows ?? []
   if (rows.length === 0) {
-    return <EmptyState icon={LineChart} title="暂无日 K 数据" hint="该标的尚未同步日 K,请先在数据页或自选页同步。" />
+    return (
+      <div className="space-y-4">
+        <EmptyState icon={LineChart} title="暂无日 K 数据" hint="该标的尚未同步日 K,请先在数据页或自选页同步。" />
+        {eventPanels}
+      </div>
+    )
   }
 
   const levels = (levelsQ.data?.levels ?? {}) as Record<LevelType, PriceLevel[]>
@@ -213,35 +237,166 @@ function StockAnalysisBoard({ symbol }: { symbol: string }) {
   const isUp = prev ? (last.close >= prev.close) : (last.close >= last.open)
 
   return (
-    <div className="rounded-card border border-border/60 bg-surface/40 overflow-hidden">
-      <div className="px-4 py-3 border-b border-border/40">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <LineChart className="h-4 w-4 text-sky-400 shrink-0" />
-            <span className="text-sm font-medium text-foreground">关键价位分析</span>
-          </div>
-          <div className="flex items-baseline gap-2 shrink-0">
-            <span className="text-[10px] text-muted">{rows.length} 个交易日</span>
-            <span className="text-[10px] text-muted/60">·</span>
-            <span className="text-[10px] text-muted">当前价</span>
-            <span className={`text-base font-mono font-bold ${isUp ? 'text-bull' : 'text-bear'}`}>
-              {curClose?.toFixed(2) ?? '—'}
-            </span>
+    <div className="space-y-4">
+      <div className="rounded-card border border-border/60 bg-surface/40 overflow-hidden">
+        <div className="px-4 py-3 border-b border-border/40">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <LineChart className="h-4 w-4 text-sky-400 shrink-0" />
+              <span className="text-sm font-medium text-foreground">关键价位分析</span>
+            </div>
+            <div className="flex items-baseline gap-2 shrink-0">
+              <span className="text-[10px] text-muted">{rows.length} 个交易日</span>
+              <span className="text-[10px] text-muted/60">·</span>
+              <span className="text-[10px] text-muted">当前价</span>
+              <span className={`text-base font-mono font-bold ${isUp ? 'text-bull' : 'text-bear'}`}>
+                {curClose?.toFixed(2) ?? '—'}
+              </span>
+            </div>
           </div>
         </div>
+        <div className="p-3">
+          <AnalysisKChart
+            rows={rows}
+            levels={levels}
+            series={levelsQ.data?.series}
+            seriesDates={levelsQ.data?.dates}
+            defaultLevelTypes={['sr', 'pivot', 'keltner_s']}
+            height={480}
+          />
+        </div>
       </div>
-      <div className="p-3">
-        <AnalysisKChart
-          rows={rows}
-          levels={levels}
-          series={levelsQ.data?.series}
-          seriesDates={levelsQ.data?.dates}
-          defaultLevelTypes={['sr', 'pivot', 'keltner_s']}
-          height={480}
-        />
+      {eventPanels}
+    </div>
+  )
+}
+
+function StockCalendarPanel({ query }: { query: Pick<UseQueryResult<StockCalendar>, 'data' | 'isLoading' | 'isError' | 'isFetching' | 'refetch'> }) {
+  const events = query.data?.events ?? []
+  const grouped = events.reduce<Record<string, StockCalendarEvent[]>>((result, event) => {
+    ;(result[event.date] ??= []).push(event)
+    return result
+  }, {})
+  const today = new Date().toLocaleDateString('en-CA')
+  const dateGroups = Object.entries(grouped)
+  const futureGroups = dateGroups.filter(([date]) => date >= today)
+  const pastGroups = dateGroups.filter(([date]) => date < today)
+
+  return (
+    <section className="rounded-card border border-border/60 bg-surface/40 overflow-hidden">
+      <div className="px-4 py-3 border-b border-border/40 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <CalendarDays className="h-4 w-4 text-amber-400 shrink-0" />
+          <span className="text-sm font-medium text-foreground">东方财富事件日历</span>
+          {query.data && <span className="text-[10px] text-muted">近一年 {query.data.count} 条</span>}
+        </div>
+        {query.data?.source_url && (
+          <div className="shrink-0">
+            <button
+              type="button"
+              onClick={() => query.refetch()}
+              disabled={query.isFetching}
+              title="从东方财富重新获取最新事件"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/60 text-muted hover:border-accent/50 hover:text-accent transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${query.isFetching ? 'animate-spin' : ''}`} />
+            </button>
+            <a
+              href={query.data.source_url}
+              target="_blank"
+              rel="noreferrer"
+              title="打开东方财富个股日历"
+              className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/60 text-muted hover:border-accent/50 hover:text-accent transition-colors"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </div>
+        )}
+      </div>
+
+      {query.isLoading ? (
+        <div className="flex items-center justify-center gap-2 py-12 text-xs text-muted">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          正在获取事件日历
+        </div>
+      ) : query.isError ? (
+        <div className="px-4 py-12 text-center text-xs text-muted">事件日历暂时无法获取</div>
+      ) : events.length === 0 ? (
+        <div className="px-4 py-12 text-center text-xs text-muted">暂无公司事件</div>
+      ) : (
+        <div className="max-h-[680px] overflow-y-auto">
+          {futureGroups.length > 0 && (
+            <div className="flex items-center gap-3 border-b border-amber-400/40 bg-amber-400/10 px-4 py-2">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+              <span className="text-[11px] font-semibold text-amber-300">即将发生</span>
+              <span className="text-[10px] text-amber-200/70">{futureGroups.reduce((count, [, dateEvents]) => count + dateEvents.length, 0)} 条</span>
+            </div>
+          )}
+          {futureGroups.map(([date, dateEvents]) => (
+            <CalendarDateGroup key={date} date={date} events={dateEvents} />
+          ))}
+          {pastGroups.length > 0 && (
+            <div className="flex items-center gap-3 border-y-2 border-border/80 bg-elevated px-4 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+              <span className="h-px flex-1 bg-border/70" />
+              <span className="shrink-0 text-[11px] font-bold text-foreground">已发生</span>
+              <span className="text-[10px] text-muted">{today.replace(/-/g, '/')} 之前</span>
+              <span className="h-px flex-1 bg-border/70" />
+            </div>
+          )}
+          {pastGroups.map(([date, dateEvents]) => (
+            <CalendarDateGroup key={date} date={date} events={dateEvents} />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function CalendarDateGroup({ date, events }: { date: string; events: StockCalendarEvent[] }) {
+  return (
+    <div className="border-b border-border/30 last:border-b-0">
+      <div className="flex items-center gap-3 px-4 pt-3 pb-1.5">
+        <time className="font-mono text-xs font-semibold text-foreground">{date.replace(/-/g, '/')}</time>
+        <span className="text-[10px] text-muted">{events.length} 条</span>
+      </div>
+      <div className="px-4 pb-3 space-y-2">
+        {events.map(event => <CalendarEventRow key={event.id} event={event} />)}
       </div>
     </div>
   )
+}
+
+function CalendarEventRow({ event }: { event: StockCalendarEvent }) {
+  const tone = eventTone(event.event_type)
+  const change = event.change_rate
+  return (
+    <article className="flex gap-3 rounded-lg border border-border/40 bg-elevated/20 px-3 py-2.5">
+      <span className={`mt-0.5 h-fit shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] ${tone}`}>
+        {event.event_type}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs leading-5 text-secondary break-words">{event.content}</p>
+        {(change != null || event.close_price != null) && (
+          <div className="mt-1 flex items-center gap-3 text-[10px] text-muted">
+            {change != null && (
+              <span className={`font-mono ${change >= 0 ? 'text-bull' : 'text-bear'}`}>
+                {change >= 0 ? '+' : ''}{change.toFixed(2)}%
+              </span>
+            )}
+            {event.close_price != null && <span className="font-mono">收盘 {event.close_price.toFixed(2)}</span>}
+          </div>
+        )}
+      </div>
+    </article>
+  )
+}
+
+function eventTone(type: string): string {
+  if (type.includes('公告')) return 'border-sky-400/30 bg-sky-400/10 text-sky-300'
+  if (type.includes('业绩') || type.includes('预约')) return 'border-amber-400/30 bg-amber-400/10 text-amber-300'
+  if (type.includes('股东')) return 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
+  if (type.includes('研报')) return 'border-indigo-400/30 bg-indigo-400/10 text-indigo-300'
+  return 'border-border/60 bg-elevated text-muted'
 }
 
 // ===== 左侧常驻:历史报告侧栏(所有股票,按时间倒序平铺) =====

@@ -106,6 +106,9 @@ COPY backend/pyproject.toml backend/uv.lock* ./
 RUN if [ "$USE_CN_MIRROR" = "1" ]; then \
       export UV_DEFAULT_INDEX="$PYPI_INDEX" UV_EXTRA_INDEX_URL="$PYPI_FALLBACK"; \
     fi; \
+    if [ "$USE_CN_MIRROR" != "1" ]; then \
+      sed -i 's#https://pypi.tuna.tsinghua.edu.cn#https://pypi.org#g' uv.lock; \
+    fi; \
     set -- --no-dev; \
     for extra in $BACKEND_EXTRAS; do \
       set -- "$@" --extra "$extra"; \

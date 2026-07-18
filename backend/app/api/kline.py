@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.indicators.pipeline import compute_enriched, compute_enriched_single
 from app.market_time import cn_now, cn_today
-from app.services import kline_sync
+from app.services import kline_sync, market_flow
 
 logger = logging.getLogger(__name__)
 
@@ -583,7 +583,8 @@ def sync_symbol(
     repo = request.app.state.repo
     capset = request.app.state.capabilities
     n = kline_sync.sync_and_persist_daily_batch([symbol], repo, capset, count=days)
-    return {"symbol": symbol, "rows_written": n}
+    flow = _refresh_industry_flow(repo.store.data_dir)
+    return {"symbol": symbol, "rows_written": n, "industry_flow": flow}
 
 
 @router.post("/sync_batch")
@@ -595,7 +596,18 @@ def sync_batch(
     repo = request.app.state.repo
     capset = request.app.state.capabilities
     n = kline_sync.sync_and_persist_daily_batch(symbols, repo, capset, count=days)
-    return {"symbols": symbols, "rows_written": n}
+    flow = _refresh_industry_flow(repo.store.data_dir)
+    return {"symbols": symbols, "rows_written": n, "industry_flow": flow}
+
+
+def _refresh_industry_flow(data_dir) -> dict:
+    """手动日K同步后的附属刷新; 资金流失败不应覆盖日K成功结果。"""
+    try:
+        snapshot = market_flow.refresh_industry_flow(data_dir)
+    except market_flow.MarketFlowError as exc:
+        logger.warning("手动日K同步后的行业资金流刷新失败: %s", exc)
+        return {"status": "failed", "detail": str(exc)}
+    return {"status": "ok", "source": snapshot["source"], "rows": len(snapshot["rows"])}
 
 
 @router.post("/refresh_views")

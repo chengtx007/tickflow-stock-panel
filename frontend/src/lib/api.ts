@@ -162,6 +162,25 @@ export interface StockLevels {
   series?: LevelSeries
 }
 
+export interface StockCalendarEvent {
+  id: string
+  date: string
+  event_type: string
+  event_type_code: string
+  content: string
+  info_code?: string | null
+  change_rate?: number | null
+  close_price?: number | null
+}
+
+export interface StockCalendar {
+  symbol: string
+  code: string
+  count: number
+  events: StockCalendarEvent[]
+  source_url: string
+}
+
 export interface AiStockReport {
   id: string
   symbol: string
@@ -905,6 +924,55 @@ export interface StrategyAlertEvent {
 }
 
 // ===== API surface =====
+export interface NewsItem {
+  id: string
+  title: string
+  content?: string
+  snippet?: string
+  source: string
+  source_name: string
+  category: string
+  published_at: string
+  published_date?: string
+  url?: string
+}
+
+export interface NewsFeedResponse {
+  news: NewsItem[]
+  category: string
+  total: number
+  updated_at: string
+  cached?: boolean
+  error?: string
+}
+
+export interface IndustryFlowRow {
+  rank: number
+  plate_id: string
+  plate_name: string
+  fund_flow: number | null
+  core_avg_pcp: number | null
+  rise_count?: number | null
+  fall_count?: number | null
+  stay_count?: number | null
+  limit_up_count?: number | null
+  top_n_stocks?: { items?: Array<{ stock_chi_name?: string; symbol?: string; change_percent?: number }> } | null
+}
+
+export interface IndustryFlowSnapshot {
+  source: string
+  as_of: string
+  updated_at: string
+  rows: IndustryFlowRow[]
+}
+
+export interface IndustryFlowHistorySnapshot {
+  source: string
+  as_of: string
+  updated_at: string
+  rows: Array<Pick<IndustryFlowRow, 'plate_id' | 'plate_name' | 'fund_flow' | 'core_avg_pcp'>>
+}
+
 export const api = {
   health: () => request<{ status: string; version: string; mode: string }>('/health'),
 
@@ -1394,6 +1462,15 @@ export const api = {
     request<{ as_of: string | null; rows: MarketSnapshotRow[] }>('/api/screener/market-snapshot'),
   overviewMarket: (asOf?: string) => request<OverviewMarket>(`/api/overview/market${asOf ? `?as_of=${asOf}` : ''}`),
 
+  industryFlow: () => request<IndustryFlowSnapshot>('/api/market-flow/industry'),
+  industryFlowHistory: (days = 20) =>
+    request<{ snapshots: IndustryFlowHistorySnapshot[] }>(`/api/market-flow/industry/history?days=${days}`),
+  refreshIndustryFlow: () => request<IndustryFlowSnapshot>('/api/market-flow/industry/refresh', { method: 'POST' }),
+  conceptFlow: () => request<IndustryFlowSnapshot>('/api/market-flow/concept'),
+  conceptFlowHistory: (days = 20) => request<{ snapshots: IndustryFlowHistorySnapshot[] }>(`/api/market-flow/concept/history?days=${days}`),
+  refreshConceptFlow: () => request<IndustryFlowSnapshot>('/api/market-flow/concept/refresh', { method: 'POST' }),
+  marketFlowPlateStocks: (plateId: string) => request<{ stocks: Array<{ symbol: string; name: string; price?: number | null; change_amount?: number | null; change_percent?: number | null }> }>(`/api/market-flow/${encodeURIComponent(plateId)}/stocks`),
+
   // 概念涨幅轮动矩阵: 每列(日期)各自把所有概念按当天涨幅从高到低排序
   rpsRotation: (days: number) =>
     request<RpsRotationData>(`/api/rps/rotation?days=${days}`),
@@ -1749,6 +1826,12 @@ export const api = {
   stockAnalysisLevels: (symbol: string, days = 120) =>
     request<StockLevels>(`/api/stock-analysis/levels?symbol=${encodeURIComponent(symbol)}&days=${days}`),
 
+  stockAnalysisCalendar: (symbol: string, limit = 500) =>
+    request<StockCalendar>(
+      `/api/stock-analysis/calendar?symbol=${encodeURIComponent(symbol)}&limit=${limit}`,
+      { cache: 'no-store' },
+    ),
+
   stockAnalysisReportsList: () =>
     request<{ reports: AiStockReport[] }>('/api/stock-analysis/reports'),
 
@@ -1765,7 +1848,7 @@ export const api = {
     request<{ ok: boolean }>(`/api/stock-analysis/reports/${encodeURIComponent(reportId)}`, { method: 'DELETE' }),
 
   /**
-   * AI 个股四维分析 — 流式调用(NDJSON,与财务分析同协议)。
+   * AI 个股三维分析 — 流式调用(NDJSON,与财务分析同协议)。
    * meta 里额外带 levels(关键价位)供图表回放。
    */
   async *stockAnalyzeStream(symbol: string, focus?: string): AsyncGenerator<{
@@ -1825,6 +1908,14 @@ export const api = {
 
   reviewReportDelete: (reportId: string) =>
     request<{ ok: boolean }>(`/api/market-recap/reports/${encodeURIComponent(reportId)}`, { method: 'DELETE' }),
+
+  // ===== 新闻资讯 =====
+  newsFeed: (category = 'all', symbol = '', query = '', limit = 40) => {
+    const params = new URLSearchParams({ category, symbol, query, limit: String(limit) })
+    return request<NewsFeedResponse>(`/api/news/feed?${params.toString()}`)
+  },
+  newsSources: () =>
+    request<{ categories: string[]; sources: Array<{ id: string; name: string }> }>('/api/news/sources'),
 
   /**
    * AI 大盘复盘 — 流式调用(NDJSON,与个股/财务分析同协议)。

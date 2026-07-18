@@ -46,6 +46,8 @@ import {
   Moon,
   X,
   WifiOff,
+  Newspaper,
+  Activity,
 } from 'lucide-react'
 import { Logo } from './Logo'
 import { api, type IndexQuote } from '@/lib/api'
@@ -68,6 +70,7 @@ type CoreIndex = (typeof CORE_INDEXES)[number]
 
 const nav = [
   { to: '/',                label: '看板',     icon: LayoutDashboard },
+  { to: '/market-flow', label: '资金流热力图', icon: Activity },
   { to: '/watchlist',  label: '自选',   icon: Star },
   { to: '/screener',   label: '策略',   icon: ScanSearch },
   { to: '/backtest',   label: '回测',   icon: History },
@@ -78,6 +81,7 @@ const nav = [
   { to: '/financials', label: '财务分析', icon: FileText },
   { to: '/monitor', label: '监控中心', icon: RadioTower },
   { to: '/review',      label: '复盘',   icon: BookOpenCheck },
+  { to: '/news',        label: '新闻资讯', icon: Newspaper },
   { to: '/indices', label: '指数', icon: BarChart3 },
   { to: '/data',       label: '数据',   icon: Database },
 ] as const

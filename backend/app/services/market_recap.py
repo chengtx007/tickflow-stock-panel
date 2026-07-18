@@ -206,18 +206,24 @@ def _build_user_prompt(overview: dict, news: list[dict], focus: str) -> str:
         news_lines = []
         for i, n in enumerate(news[:8], 1):
             title = (n.get("title") or "").strip()
-            snippet = (n.get("snippet") or "").strip()
-            source = (n.get("source") or "").strip()
-            pub = (n.get("published_date") or "").strip()
+            snippet = (n.get("snippet") or n.get("content") or "").strip()
+            source = (n.get("source_name") or n.get("source") or "").strip()
+            pub = (n.get("published_date") or n.get("published_at") or "").strip()
+            url = (n.get("url") or "").strip()
             meta = " / ".join(p for p in (source, pub) if p)
-            news_lines.append(f"{i}. {title} ({meta})\n   {snippet}" if meta else f"{i}. {title}\n   {snippet}")
+            line = f"{i}. {title} ({meta})" if meta else f"{i}. {title}"
+            if snippet:
+                line += f"\n   摘要: {snippet}"
+            if url:
+                line += f"\n   链接: {url}"
+            news_lines.append(line)
         parts.extend(["", "## 近期市场新闻", "\n".join(news_lines)])
     else:
         parts.extend([
             "",
             "## 近期市场新闻",
-            "(暂无新闻数据:本功能新闻检索能力将在后续版本接入。"
-            "消息催化一节请直接从量价异动给出可能的催化逻辑结论,不要编造具体消息,也不要复述本说明。)",
+            "(本次未检索到联网新闻。消息催化一节请直接从量价异动给出可能的催化逻辑结论,"
+            "明确标注为推断,不要编造具体消息。)",
         ])
 
     from app.services.ai_provider import sanitize_focus
@@ -274,7 +280,20 @@ async def recap_market_stream(
         focus: 用户追加的复盘关注点。
         news: 预检索的新闻列表(P1 不传,留 None 走降级说明;P3 由 news_search 注入)。
     """
-    # 1. 装配市场总览
+    # 1. 获取近期市场新闻。统一放在服务层入口,确保手动、定时和行情复盘都能接入。
+    if news is None:
+        try:
+            import asyncio
+            from app.services.news import news_service
+            news = await asyncio.wait_for(
+                asyncio.to_thread(news_service.get_market_context, 8),
+                timeout=12,
+            )
+        except Exception as exc:
+            logger.warning("market news lookup failed: %s", exc)
+            news = []
+
+    # 2. 装配市场总览
     overview = build_market_overview(repo, quote_service, depth_service, as_of)
     as_of_str = overview.get("as_of")
 
@@ -287,16 +306,17 @@ async def recap_market_stream(
 
     emo = overview.get("emotion") or {}
 
-    # 2. meta 事件(前端据此先渲染信号灯/看板)
+    # 3. meta 事件(前端据此先渲染信号灯/看板)
     yield json.dumps({
         "type": "meta",
         "as_of": as_of_str,
         "emotion_score": emo.get("score", 50),
         "emotion_label": emo.get("label", "—"),
         "summary": _recap_summary(overview),
+        "news_count": len(news or []),
     }, ensure_ascii=False)
 
-    # 3+4. 构建 prompt + 流式调用 LLM(整体 try-except,任何异常 yield error,避免前端卡死)
+    # 4+5. 构建 prompt + 流式调用 LLM(整体 try-except,任何异常 yield error,避免前端卡死)
     try:
         from app.services.ai_provider import stream_ai_text
 

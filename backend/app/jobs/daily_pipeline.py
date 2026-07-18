@@ -21,7 +21,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.indicators.pipeline import run_pipeline
 from app.config import settings
-from app.services import index_sync, instrument_sync, kline_sync, preferences as _prefs
+from app.services import index_sync, instrument_sync, kline_sync, market_flow, preferences as _prefs
 from app.tickflow.capabilities import Cap, CapabilitySet
 from app.tickflow.pools import DEMO_SYMBOLS, get_pool
 from app.tickflow.repository import KlineRepository
@@ -222,6 +222,21 @@ def run_now(
         emit("sync_daily", 45, "日K 完成")
         logger.info("sync_daily: [%s ~ %s] done", start_date, today)
     _invalidate("daily")
+
+    # 日K请求完成后同步行业资金流快照. 主源为选股通公开接口, TuShare 仅作回退;
+    # 该辅助数据失败不应让日K/enriched 管道整体失败.
+    industry_flow_rows = 0
+    industry_flow_source: str | None = None
+    if pull_a_share or override_start_date:
+        emit("sync_industry_flow", 46, "同步行业资金流…")
+        try:
+            industry_flow = market_flow.refresh_industry_flow(repo.store.data_dir)
+            industry_flow_rows = len(industry_flow["rows"])
+            industry_flow_source = industry_flow["source"]
+            emit("sync_industry_flow", 48, f"行业资金流完成,{industry_flow_rows} 个板块")
+        except market_flow.MarketFlowError as exc:
+            logger.warning("行业资金流刷新失败，不影响日K同步: %s", exc)
+            emit("sync_industry_flow", 48, "行业资金流刷新失败")
 
     # 单标的新鲜度: 全局 max(date) 会被任一有今日数据的标的"拉高", 掩盖停牌/复牌/
     # 一直拉失败而掉队的个股缺口(全局判据只刷"今天", 永不回补掉队标的的历史缺口)。
@@ -527,6 +542,8 @@ def run_now(
         "etf_daily_rows": written_etf_daily,
         "etf_adj_factor_symbols": etf_adj_symbols,
         "minute_rows": written_minute,
+        "industry_flow_rows": industry_flow_rows,
+        "industry_flow_source": industry_flow_source,
         "lagging_symbols": len(lagging_symbols),
         "skipped_stages": skipped,
         "stage_errors": stage_errors,

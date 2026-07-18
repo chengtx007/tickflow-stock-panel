@@ -1,10 +1,12 @@
-import { useState, useEffect, useRef, type ReactNode } from 'react'
+import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
+import * as echarts from 'echarts'
+import type { ECharts, EChartsOption } from 'echarts'
 import { Activity, ArrowDownRight, ArrowUpRight, BarChart3, BellRing, Database, Flame, Gauge, Info, LineChart, Loader2, Play, RefreshCw, Sparkles, Target, Timer } from 'lucide-react'
 import { DatePicker } from '@/components/DatePicker'
-import { api, type MarketSnapshotRow, type OverviewDimensionRankItem, type OverviewMarket, type AlertEvent } from '@/lib/api'
+import { api, type MarketSnapshotRow, type OverviewDimensionRankItem, type OverviewMarket, type AlertEvent, type IndustryFlowSnapshot, type IndustryFlowHistorySnapshot } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { fmtBigNum, fmtPct } from '@/lib/format'
 import { useDataStatus, useCapabilities, useSettings } from '@/lib/useSharedQueries'
@@ -529,6 +531,200 @@ function HotRankCard({ title, rank, configUrl, onStockClick }: {
   )
 }
 
+type IndustryFlowRow = IndustryFlowSnapshot['rows'][number]
+
+function IndustryFlowTreemap({
+  rows,
+  history,
+  positive,
+}: {
+  rows: IndustryFlowRow[]
+  history: Map<string, number[]>
+  positive: boolean
+}) {
+  const maxAbsFlow = Math.max(...rows.map(row => Math.abs(row.fund_flow ?? 0)), 1)
+  const chartRef = useRef<HTMLDivElement>(null)
+  const chartInstanceRef = useRef<ECharts | null>(null)
+
+  const option = useMemo<EChartsOption>(() => ({
+    animationDurationUpdate: 350,
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#18181d',
+      borderColor: '#34343d',
+      textStyle: { color: '#f4f4f5', fontSize: 12 },
+      padding: [9, 11],
+      formatter: (params: any) => {
+        const item = params.data as {
+          flow: number
+          pct: number
+          names: string
+          history: number[]
+        }
+        const trend = item.history.length > 1
+          ? item.history.map(value => fmtBigNum(value)).join(' → ')
+          : '新数据'
+        return [
+          `<strong>${params.name}</strong>`,
+          `资金净流：<b style="color:${item.flow >= 0 ? '#ef5a54' : '#22c58b'}">${fmtBigNum(item.flow)}</b>`,
+          `板块涨跌：${fmtPct(item.pct)}`,
+          item.names ? `代表股：${item.names}` : '',
+          `资金趋势：${trend}`,
+        ].filter(Boolean).join('<br/>')
+      },
+    },
+    series: [{
+      type: 'treemap',
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
+      roam: false,
+      nodeClick: false,
+      breadcrumb: { show: false },
+      sort: 'desc',
+      visibleMin: 1,
+      label: {
+        show: true,
+        color: '#f8fafc',
+        fontSize: 11,
+        lineHeight: 17,
+        overflow: 'truncate',
+        formatter: (params: any) => {
+          const item = params.data as { flow: number; pct: number }
+          return `{name|${params.name}}\n{flow|${fmtBigNum(item.flow)}} {pct|${fmtPct(item.pct)}}`
+        },
+        rich: {
+          name: { fontSize: 11, fontWeight: 600, lineHeight: 17, color: '#ffffff' },
+          flow: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11, fontWeight: 700, lineHeight: 16 },
+          pct: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 10, color: '#d5d7dc', lineHeight: 16 },
+        },
+      },
+      itemStyle: {
+        borderColor: '#1b1b20',
+        borderWidth: 1,
+        gapWidth: 1,
+      },
+      emphasis: {
+        itemStyle: { borderColor: '#f8fafc', borderWidth: 1 },
+        label: { color: '#ffffff' },
+      },
+      data: rows.map(row => {
+        const flow = row.fund_flow ?? 0
+        const pct = row.core_avg_pcp ?? 0
+        const strength = Math.sqrt(Math.abs(flow) / maxAbsFlow)
+        const positive = flow >= 0
+        const names = row.top_n_stocks?.items?.slice(0, 2)
+          .map(stock => stock.stock_chi_name || stock.symbol)
+          .filter(Boolean)
+          .join(' · ') ?? ''
+        return {
+          name: row.plate_name,
+          value: Math.max(Math.abs(flow), maxAbsFlow * 0.002),
+          flow,
+          pct,
+          names,
+          history: history.get(row.plate_id) ?? [],
+          itemStyle: {
+            color: positive
+              ? `rgba(196, 67, 66, ${0.35 + strength * 0.55})`
+              : `rgba(24, 132, 91, ${0.35 + strength * 0.55})`,
+          },
+        }
+      }),
+    }],
+  }), [history, maxAbsFlow, positive, rows])
+
+  useEffect(() => {
+    if (!chartRef.current) return
+    const chart = echarts.init(chartRef.current, undefined, { renderer: 'canvas' })
+    chartInstanceRef.current = chart
+    const resize = () => chart.resize()
+    window.addEventListener('resize', resize)
+    return () => {
+      window.removeEventListener('resize', resize)
+      chart.dispose()
+      chartInstanceRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    chartInstanceRef.current?.setOption(option, { notMerge: true })
+  }, [option])
+
+  return <div ref={chartRef} className="h-[25rem] border border-border bg-[#17171b]" aria-label={positive ? '行业资金流入矩形热力图' : '行业资金流出矩形热力图'} />
+}
+
+export function IndustryFlowHeatmap({
+  snapshot,
+  history,
+  refreshing,
+  onRefresh,
+}: {
+  snapshot?: IndustryFlowSnapshot
+  history?: IndustryFlowHistorySnapshot[]
+  refreshing: boolean
+  onRefresh: () => void
+}) {
+  if (!snapshot?.rows.length) return null
+
+  const rows = [...snapshot.rows].sort((a, b) => a.rank - b.rank)
+  const inflows = rows.filter(row => (row.fund_flow ?? 0) > 0)
+  const outflows = rows.filter(row => (row.fund_flow ?? 0) < 0)
+  const inflowTotal = inflows.reduce((total, row) => total + (row.fund_flow ?? 0), 0)
+  const outflowTotal = Math.abs(outflows.reduce((total, row) => total + (row.fund_flow ?? 0), 0))
+  const historyById = new Map<string, number[]>()
+  for (const daily of history ?? []) {
+    for (const row of daily.rows) {
+      if (typeof row.fund_flow !== 'number') continue
+      const values = historyById.get(row.plate_id) ?? []
+      values.push(row.fund_flow)
+      historyById.set(row.plate_id, values)
+    }
+  }
+
+  return (
+    <section className="rounded-card border border-border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <span className="h-3 w-0.5 bg-accent" />
+          <Activity className="h-3.5 w-3.5 text-accent" />
+          <h2 className="text-xs font-semibold text-foreground">行业资金流</h2>
+          <span className="font-mono text-[10px] text-muted">{snapshot.as_of} · {rows.length} 个行业</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1 font-mono text-[10px] text-bull"><i className="h-2 w-2 bg-bull" />流入 {fmtBigNum(inflowTotal)}</span>
+          <span className="inline-flex items-center gap-1 font-mono text-[10px] text-bear"><i className="h-2 w-2 bg-bear" />流出 {fmtBigNum(outflowTotal)}</span>
+          <button
+            onClick={onRefresh}
+            disabled={refreshing}
+            title="刷新行业资金流"
+            className="inline-flex h-6 w-6 items-center justify-center text-muted transition-colors hover:bg-elevated hover:text-accent disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
+        <div>
+          <div className="mb-1 flex items-baseline justify-between px-0.5">
+            <span className="text-[11px] font-semibold text-bull">资金流入</span>
+            <span className="font-mono text-[10px] text-muted">{inflows.length} 个 · {fmtBigNum(inflowTotal)}</span>
+          </div>
+          <IndustryFlowTreemap rows={inflows} history={historyById} positive />
+        </div>
+        <div>
+          <div className="mb-1 flex items-baseline justify-between px-0.5">
+            <span className="text-[11px] font-semibold text-bear">资金流出</span>
+            <span className="font-mono text-[10px] text-muted">{outflows.length} 个 · {fmtBigNum(outflowTotal)}</span>
+          </div>
+          <IndustryFlowTreemap rows={outflows} history={historyById} positive={false} />
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export function Dashboard() {
   const qc = useQueryClient()
   const [selectedDate, setSelectedDate] = useState<string | undefined>()
@@ -592,17 +788,21 @@ export function Dashboard() {
   useEffect(() => {
     if (fetchSucceeded) {
       qc.invalidateQueries({ queryKey: QK.dataStatus })
-      qc.invalidateQueries({ queryKey: QK.overviewMarket(undefined) })
+      qc.invalidateQueries({ queryKey: QK.pipelineJobs })
+      qc.invalidateQueries({ queryKey: ['kline'] })
+      qc.invalidateQueries({ queryKey: ['stock-levels'] })
+      qc.invalidateQueries({ queryKey: ['index-daily'] })
+      qc.invalidateQueries({ queryKey: ['overview-market'] })
+      qc.invalidateQueries({ queryKey: QK.industryFlow })
+      qc.invalidateQueries({ queryKey: QK.industryFlowHistory(20) })
     }
   }, [fetchSucceeded, qc])
 
   // 组件重新挂载时(从其他页面切回)恢复正在运行的同步任务进度。
-  // 原因: fetchJobId 是组件内状态, 切走页面时组件卸载、状态丢失, 切回后进度卡片消失。
-  // 修复: 挂载时若无本地数据且未跟踪任何 job, 查一次后端是否有 active job, 有则接管。
+  // fetchJobId 是组件内状态, 无论当前是否已有本地数据都可能因切页而丢失。
   const resumeTriedRef = useRef(false)
   useEffect(() => {
     if (resumeTriedRef.current) return
-    if (!hasNoData) return
     if (fetchJobId) return
     resumeTriedRef.current = true
     api.pipelineJobs(1).then(({ active_id }) => {
@@ -714,6 +914,15 @@ export function Dashboard() {
             className="inline-flex items-center gap-1 rounded-btn border border-border bg-elevated px-2 py-1 text-[11px] text-secondary transition-colors hover:text-foreground disabled:opacity-50"
           >
             <RefreshCw className={`h-3 w-3 ${manualFetching ? 'animate-spin' : ''}`} />重载
+          </button>
+          <button
+            onClick={() => startFetch.mutate()}
+            disabled={isFetching}
+            title="增量同步全市场日K、技术指标和指数数据"
+            className="inline-flex items-center gap-1 rounded-btn border border-accent/40 bg-accent/10 px-2 py-1 text-[11px] text-accent transition-colors hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isFetching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Database className="h-3 w-3" />}
+            {isFetching ? `同步中 ${fetchStatus.data?.progress ?? 0}%` : '同步最新数据'}
           </button>
         </div>
       </div>

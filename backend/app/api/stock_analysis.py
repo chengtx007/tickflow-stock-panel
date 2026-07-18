@@ -1,10 +1,11 @@
-"""个股分析 API — 关键价位 + AI 四维分析 + 报告持久化。
+"""个股分析 API — 关键价位 + AI 三维分析 + 报告持久化。
 
 路由前缀: /api/stock-analysis
 
 端点:
   GET  /levels?symbol=         11 类关键价位(图表 markLine 数据源)
-  POST /analyze                AI 流式四维分析(NDJSON)
+  GET  /calendar?symbol=       东方财富公司事件日历
+   POST /analyze                AI 流式三维分析(NDJSON)
   GET  /reports                历史报告列表
   POST /reports                保存一条报告
   DELETE /reports/{report_id}  删除一条报告
@@ -23,6 +24,7 @@ from pydantic import BaseModel
 from app.indicators.levels import compute_levels, summarize_levels
 from app.services import stock_reports
 from app.services.stock_analyzer import analyze_stock_stream
+from app.services.stock_calendar import StockCalendarError, fetch_events
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +147,22 @@ def get_levels(
     }
 
 
+@router.get("/calendar")
+def get_calendar(
+    symbol: str = Query(..., description="标的代码,如 000001.SZ"),
+    limit: int = Query(500, ge=20, le=500, description="近一年最多返回的事件数量"),
+):
+    """获取东方财富个股事件日历。"""
+    if not symbol.strip():
+        raise HTTPException(400, "symbol 不能为空")
+    try:
+        return fetch_events(symbol, limit)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except StockCalendarError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
 class AnalyzeRequest(BaseModel):
     """AI 个股分析请求。"""
     symbol: str
@@ -153,7 +171,7 @@ class AnalyzeRequest(BaseModel):
 
 @router.post("/analyze")
 async def analyze_stock(request: Request, req: AnalyzeRequest):
-    """AI 个股四维分析 — NDJSON 流式返回。
+    """AI 个股三维分析 — NDJSON 流式返回。
 
     组合 K 线(技术指标)+ 财务表 + 关键价位 → 客观技术分析提示词 →
     流式调用 LLM → 逐 chunk 以 NDJSON 推给前端(每行一个 JSON)。

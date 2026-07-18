@@ -18,6 +18,10 @@ export const QK = {
   quoteStatus:    ['quote-status'] as const,
   quoteInterval:  ['quote-interval'] as const,
   overviewMarket: (asOf?: string) => ['overview-market', asOf ?? 'latest'] as const,
+  industryFlow: ['industry-flow'] as const,
+  industryFlowHistory: (days: number) => ['industry-flow-history', days] as const,
+  conceptFlow: ['concept-flow'] as const,
+  conceptFlowHistory: (days: number) => ['concept-flow-history', days] as const,
   indexQuotes:    ['index-quotes'] as const,
   indexList:      ['index-list'] as const,
 
@@ -57,6 +61,7 @@ export const QK = {
   kline:                (symbol: string, start: string, end: string, extColumns?: string) =>
                            ['kline', symbol, start, end, extColumns ?? ''] as const,
   stockLevels:          (symbol: string, days?: number) => ['stock-levels', symbol, days ?? 120] as const,
+  stockCalendar:        (symbol: string) => ['stock-calendar', symbol] as const,
   klineMinute:          (symbol: string, date: string) =>
                              ['kline-minute', symbol, date] as const,
   indexDaily:           (symbol: string, start: string, end: string) =>
